@@ -1,0 +1,328 @@
+---
+- name: Apply System Optimizations and Post-Install Setup to Fedora
+  hosts: localhost
+  connection: local
+  become: yes
+  gather_facts: yes
+
+  tasks:
+    # ==========================================================================
+    # USER DISCOVERY
+    # ==========================================================================
+    - name: Identify the non-root user and home directory
+      ansible.builtin.user:
+        name: "{{ ansible_env.SUDO_USER | default(ansible_user_id) }}"
+      register: target_user
+
+    # ==========================================================================
+    # PACKAGE MANAGER OPTIMIZATIONS (DNF / DNF5)
+    # ==========================================================================
+    - name: Configure DNF speedups in /etc/dnf/dnf.conf
+      ansible.builtin.ini_file:
+        path: /etc/dnf/dnf.conf
+        section: main
+        option: "{{ item.key }}"
+        value: "{{ item.value }}"
+        mode: '0644'
+      loop:
+        - { key: 'max_parallel_downloads', value: '20' }
+        - { key: 'defaultyes', value: 'True' }
+        - { key: 'fastestmirror', value: 'True' }
+
+    - name: Check if /etc/dnf5/dnf.conf exists
+      ansible.builtin.stat:
+        path: /etc/dnf5/dnf.conf
+      register: dnf5_conf_stat
+
+    - name: Configure DNF5 speedups in /etc/dnf5/dnf.conf
+      ansible.builtin.ini_file:
+        path: /etc/dnf5/dnf.conf
+        section: main
+        option: "{{ item.key }}"
+        value: "{{ item.value }}"
+        mode: '0644'
+      loop:
+        - { key: 'max_parallel_downloads', value: '20' }
+        - { key: 'defaultyes', value: 'True' }
+        - { key: 'fastestmirror', value: 'True' }
+      when: dnf5_conf_stat.stat.exists
+
+    # ==========================================================================
+    # SYSTEM OPTIMIZATIONS (SWAPPINESS & BTRFS)
+    # ==========================================================================
+    - name: Configure VM swappiness to 10
+      ansible.builtin.copy:
+        content: "vm.swappiness = 10\n"
+        dest: /etc/sysctl.d/99-swappiness.conf
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Apply sysctl settings immediately
+      ansible.builtin.command: sysctl -p /etc/sysctl.d/99-swappiness.conf
+      changed_when: false
+
+    - name: Enable noatime mount option for Btrfs volumes in /etc/fstab
+      ansible.builtin.replace:
+        path: /etc/fstab
+        regexp: '^(\S+\s+\S+\s+btrfs\s+)(?!.*noatime)(\S+)(.*)$'
+        replace: '\1\2,noatime\3'
+
+    - name: Remount root filesystem to apply Btrfs tweaks immediately
+      ansible.builtin.command: mount -o remount /
+      changed_when: false
+      failed_when: false
+
+    # ==========================================================================
+    # REPOSITORIES SETUP
+    # ==========================================================================
+    - name: Install RPM Fusion Free repository
+      ansible.builtin.dnf:
+        name: "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-{{ ansible_distribution_major_version }}.noarch.rpm"
+        state: present
+        disable_gpg_check: yes
+
+    - name: Install RPM Fusion Nonfree repository
+      ansible.builtin.dnf:
+        name: "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-{{ ansible_distribution_major_version }}.noarch.rpm"
+        state: present
+        disable_gpg_check: yes
+
+    - name: Add Terra Repository
+      ansible.builtin.yum_repository:
+        name: terra
+        description: Terra $releasever
+        baseurl: https://repos.fyralabs.com/terra$releasever
+        gpgcheck: yes
+        repo_gpgcheck: yes
+        gpgkey: https://repos.fyralabs.com/terra$releasever/key.asc
+        skip_if_unavailable: yes
+        enabled: yes
+
+    - name: Add Visual Studio Code Repository
+      ansible.builtin.yum_repository:
+        name: vscode
+        description: Visual Studio Code
+        baseurl: https://packages.microsoft.com/yumrepos/vscode
+        gpgcheck: yes
+        gpgkey: https://packages.microsoft.com/keys/microsoft.asc
+        enabled: yes
+
+    - name: Add Brave Browser Repository
+      ansible.builtin.yum_repository:
+        name: brave-browser
+        description: Brave Browser
+        baseurl: https://brave-browser-rpm-release.s3.brave.com/x86_64/
+        gpgcheck: yes
+        gpgkey: https://brave-browser-rpm-release.s3.brave.com/brave-core.asc
+        enabled: yes
+
+    - name: Add Google Chrome Repository
+      ansible.builtin.yum_repository:
+        name: google-chrome
+        description: Google Chrome
+        baseurl: https://dl.google.com/linux/chrome/rpm/stable/x86_64
+        gpgcheck: yes
+        gpgkey: https://dl.google.com/linux/linux_signing_key.pub
+        enabled: yes
+
+    - name: Check if Fedora Workstation repositories file exists
+      ansible.builtin.stat:
+        path: /etc/yum.repos.d/fedora-workstation-repositories.repo
+      register: fedora_workstation_repos_file
+
+    - name: Disable unused Workstation repositories (NVIDIA & Steam)
+      ansible.builtin.ini_file:
+        path: /etc/yum.repos.d/fedora-workstation-repositories.repo
+        section: "{{ item }}"
+        option: enabled
+        value: "0"
+        mode: '0644'
+      loop:
+        - rpmfusion-nonfree-nvidia-driver
+        - rpmfusion-steam
+      when: fedora_workstation_repos_file.stat.exists
+
+    # ==========================================================================
+    # REMOVE UNWANTED DEFAULT APPLICATIONS
+    # ==========================================================================
+    - name: Uninstall Firefox and LibreOffice
+      ansible.builtin.dnf:
+        name:
+          - firefox
+          - libreoffice-core
+          - libreoffice-calc
+          - libreoffice-writer
+          - libreoffice-impress
+          - libreoffice-draw
+          - libreoffice-math
+        state: absent
+
+    # ==========================================================================
+    # APPLICATIONS & MULTIMEDIA
+    # ==========================================================================
+    - name: Swap ffmpeg-free with full ffmpeg from RPM Fusion
+      ansible.builtin.dnf:
+        name: ffmpeg
+        state: present
+        allowerasing: yes
+
+    - name: Install RPM Fusion @multimedia group
+      ansible.builtin.dnf:
+        name: "@multimedia"
+        state: present
+        install_weak_deps: no
+        exclude: PackageKit-gstreamer-plugin
+
+    - name: Install VLC, GNOME Boxes, and extra codecs
+      ansible.builtin.dnf:
+        name:
+          - vlc
+          - gnome-boxes
+          - gstreamer1-plugins-ugly
+          - gstreamer1-plugins-bad-freeworld
+          - gstreamer1-libav
+          - lame-libs
+        state: present
+
+    - name: Install VS Code, Brave Browser, and Google Chrome
+      ansible.builtin.dnf:
+        name:
+          - code
+          - brave-browser
+          - google-chrome-stable
+        state: present
+
+    # ==========================================================================
+    # DEVELOPMENT RUNTIMES & BUILD TOOLS
+    # ==========================================================================
+    - name: Install developer tools and runtimes
+      ansible.builtin.dnf:
+        name:
+          - "@development-tools"
+          - golang
+          - nodejs
+          - python3
+          - python3-pip
+          - python3-devel
+          - java-latest-openjdk
+          - distrobox
+          - zsh
+          - zsh-syntax-highlighting
+          - zsh-autosuggestions
+        state: present
+
+    # ==========================================================================
+    # PERFORMANCE SCHEDULER & FLATPAK
+    # ==========================================================================
+    - name: Install System76 CPU Scheduler
+      ansible.builtin.dnf:
+        name: system76-scheduler
+        state: present
+
+    - name: Enable and start System76 Scheduler service
+      ansible.builtin.systemd:
+        name: system76-scheduler
+        enabled: yes
+        state: started
+
+    - name: Ensure flatpak is installed
+      ansible.builtin.dnf:
+        name: flatpak
+        state: present
+
+    - name: Add Flathub flatpak remote repository
+      ansible.builtin.command: flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+      changed_when: false
+
+    - name: Check if Fedora Flatpak remote exists
+      ansible.builtin.command: flatpak remote-list
+      register: flatpak_remotes
+      changed_when: false
+      failed_when: false
+
+    - name: Remove limited Fedora Flatpak remote
+      ansible.builtin.command: flatpak remote-delete fedora
+      when: "'fedora' in flatpak_remotes.stdout"
+
+    - name: Install OnlyOffice Desktop Editors via Flatpak
+      ansible.builtin.command: flatpak install -y flathub org.onlyoffice.desktopeditors
+      changed_when: false
+
+    # ==========================================================================
+    # NERD FONTS (REQUIRED FOR STARSHIP ICONS)
+    # ==========================================================================
+    - name: Create local fonts directory
+      ansible.builtin.file:
+        path: "{{ target_user.home }}/.local/share/fonts"
+        state: directory
+        owner: "{{ target_user.name }}"
+        group: "{{ target_user.group }}"
+        mode: '0755'
+
+    - name: Download and extract Fira Code Nerd Font
+      ansible.builtin.unarchive:
+        src: https://github.com/ryanoasis/nerd-fonts/releases/latest/download/FiraCode.tar.xz
+        dest: "{{ target_user.home }}/.local/share/fonts"
+        remote_src: yes
+        owner: "{{ target_user.name }}"
+        group: "{{ target_user.group }}"
+
+    - name: Rebuild font cache
+      ansible.builtin.command: fc-cache -f
+      changed_when: false
+
+    # ==========================================================================
+    # SHELL & USABILITY POLISH
+    # ==========================================================================
+    - name: Change user default shell to Zsh
+      ansible.builtin.user:
+        name: "{{ target_user.name }}"
+        shell: /bin/zsh
+
+    - name: Install Starship shell prompt
+      ansible.builtin.dnf:
+        name: starship
+        state: present
+
+    - name: Configure Starship in user .bashrc
+      ansible.builtin.lineinfile:
+        path: "{{ target_user.home }}/.bashrc"
+        line: 'eval "$(starship init bash)"'
+        state: present
+        owner: "{{ target_user.name }}"
+        group: "{{ target_user.group }}"
+        mode: '0644'
+        create: yes
+
+    - name: Configure Zsh options and plugins in user .zshrc
+      ansible.builtin.blockinfile:
+        path: "{{ target_user.home }}/.zshrc"
+        block: |
+          # Initialize Starship Prompt
+          eval "$(starship init zsh)"
+
+          # Enable syntax highlighting and autosuggestions from DNF packages
+          source /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+          source /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh
+
+          # Sane Zsh options
+          setopt HIST_IGNORE_DUPS
+          setopt SHARE_HISTORY
+
+          # Custom alias to easily reload zsh config
+          alias reload="source ~/.zshrc"
+        state: present
+        owner: "{{ target_user.name }}"
+        group: "{{ target_user.group }}"
+        mode: '0644'
+        create: yes
+
+    - name: Enable sudo password feedback (show asterisks)
+      ansible.builtin.copy:
+        content: "Defaults pwfeedback\n"
+        dest: /etc/sudoers.d/pwfeedback
+        owner: root
+        group: root
+        mode: '0440'
+...
