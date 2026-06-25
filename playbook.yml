@@ -126,6 +126,16 @@
         gpgkey: https://dl.google.com/linux/linux_signing_key.pub
         enabled: yes
 
+    - name: Add Google Cloud CLI Repository
+      ansible.builtin.yum_repository:
+        name: google-cloud-cli
+        description: Google Cloud CLI
+        baseurl: https://packages.cloud.google.com/yum/repos/cloud-sdk-el9-x86_64
+        gpgcheck: yes
+        repo_gpgcheck: no
+        gpgkey: https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+        enabled: yes
+
     - name: Check if Fedora Workstation repositories file exists
       ansible.builtin.stat:
         path: /etc/yum.repos.d/fedora-workstation-repositories.repo
@@ -185,12 +195,14 @@
           - lame-libs
         state: present
 
-    - name: Install VS Code, Brave Browser, and Google Chrome
+    - name: Install VS Code, Brave Browser, Google Chrome, and gcloud CLI
       ansible.builtin.dnf:
         name:
           - code
           - brave-browser
           - google-chrome-stable
+          - google-cloud-cli
+          - libxcrypt-compat
         state: present
 
     # ==========================================================================
@@ -211,6 +223,67 @@
           - zsh-syntax-highlighting
           - zsh-autosuggestions
         state: present
+
+    # ==========================================================================
+    # GNOME TWEAKS & EXTENSIONS
+    # ==========================================================================
+    - name: Install GNOME Tweaks, Extensions App, and system extensions
+      ansible.builtin.dnf:
+        name:
+          - gnome-tweaks
+          - gnome-extensions-app
+          - gnome-shell-extension-dash-to-dock
+          - gnome-shell-extension-appindicator
+        state: present
+
+    - name: Download and install Bluetooth Quick Connect GNOME extension
+      ansible.builtin.shell:
+        cmd: |
+          python3 -c '
+          import urllib.request, json, os, subprocess, zipfile
+          try:
+              shell_ver = subprocess.check_output(["gnome-shell", "--version"]).decode().split()[-1]
+              url = f"https://extensions.gnome.org/extension-info/?pk=1401&shell_version={shell_ver}"
+              req = urllib.request.urlopen(url)
+              data = json.loads(req.read().decode())
+              download_url = "https://extensions.gnome.org" + data["download_url"]
+              uuid = data["uuid"]
+              ext_dir = os.path.expanduser(f"~/.local/share/gnome-shell/extensions/{uuid}")
+              os.makedirs(ext_dir, exist_ok=True)
+              zip_path, _ = urllib.request.urlretrieve(download_url)
+              with zipfile.ZipFile(zip_path, "r") as zip_ref:
+                  zip_ref.extractall(ext_dir)
+              os.remove(zip_path)
+              print(uuid)
+          except Exception as e:
+              print(f"Error installing extension: {e}")
+          '
+        creates: "{{ target_user.home }}/.local/share/gnome-shell/extensions/bluetooth-quick-connect@bjarosze.github.io"
+      become: yes
+      become_user: "{{ target_user.name }}"
+
+    - name: Enable GNOME Shell Extensions
+      ansible.builtin.command: "dbus-run-session gnome-extensions enable {{ item }}"
+      become: yes
+      become_user: "{{ target_user.name }}"
+      loop:
+        - dash-to-dock@micxgx.gmail.com
+        - appindicatorsupport@rgcjonas.gmail.com
+        - bluetooth-quick-connect@bjarosze.github.io
+      changed_when: false
+      failed_when: false
+
+    - name: Configure GNOME window button layout (minimize, maximize, close)
+      ansible.builtin.command: dbus-run-session gsettings set org.gnome.desktop.wm.preferences button-layout "appmenu:minimize,maximize,close"
+      become: yes
+      become_user: "{{ target_user.name }}"
+      changed_when: false
+
+    - name: Set GNOME color scheme to prefer-dark
+      ansible.builtin.command: dbus-run-session gsettings set org.gnome.desktop.interface color-scheme "prefer-dark"
+      become: yes
+      become_user: "{{ target_user.name }}"
+      changed_when: false
 
     # ==========================================================================
     # PERFORMANCE SCHEDULER & FLATPAK
@@ -273,6 +346,371 @@
       changed_when: false
 
     # ==========================================================================
+    # ANTIGRAVITY CLI INSTALLATION
+    # ==========================================================================
+    - name: Download and execute Antigravity CLI installer
+      ansible.builtin.shell:
+        cmd: "curl -fsSL https://antigravity.google/cli/install.sh | bash"
+        creates: "{{ target_user.home }}/.local/bin/agy"
+      become: yes
+      become_user: "{{ target_user.name }}"
+
+    # ==========================================================================
+    # ANTIGRAVITY IDE INSTALLATION (TARBALL - NATIVE ANSIBLE METHOD)
+    # ==========================================================================
+    - name: Ensure helper prerequisites are installed for Antigravity IDE
+      ansible.builtin.dnf:
+        name:
+          - curl
+          - tar
+          - desktop-file-utils
+          - python3
+        state: present
+
+    - name: Resolve latest Antigravity IDE version and URL
+      ansible.builtin.shell: |
+        python3 - "{{ platform }}" <<'PY'
+        import urllib.request, re, json, sys
+        from urllib.parse import urljoin, unquote
+        
+        try:
+            req = urllib.request.urlopen("https://antigravity.google/download")
+            html = req.read().decode('utf-8', errors='replace')
+            matches = re.findall(r'(?:src|href)="([^"]*main-[^"]+\.js)"', html)
+            if not matches:
+                sys.exit("Could not find the Antigravity download bundle")
+            main_js_url = urljoin("https://antigravity.google/download", matches[-1])
+            
+            req_js = urllib.request.urlopen(main_js_url)
+            bundle = req_js.read().decode('utf-8', errors='replace').replace('\\/', '/')
+            platform = sys.argv[1]
+            
+            urls = re.findall(r'href:"(https?://[^"]*/' + re.escape(platform) + r'/Antigravity(?:%20|\s)IDE\.tar\.gz)"', bundle)
+            if not urls:
+                sys.exit(f"Could not find an IDE download URL for {platform}")
+                
+            url = urls[-1]
+            version_match = re.search(r'/stable/([^/]+)/', url)
+            version = version_match.group(1).split("-", 1)[0] if version_match else "unknown"
+            
+            print(json.dumps({"version": version, "url": url}))
+        except Exception as e:
+            sys.exit(f"Error resolving Antigravity IDE: {e}")
+        PY
+      vars:
+        platform_map:
+          x86_64: linux-x64
+          amd64: linux-x64
+          aarch64: linux-arm
+          arm64: linux-arm
+        platform: "{{ platform_map[ansible_architecture] | default('linux-x64') }}"
+      register: resolved_ide
+      changed_when: false
+
+    - name: Get currently installed Antigravity IDE version
+      ansible.builtin.slurp:
+        src: /opt/antigravity-ide/.linuxcapable-version
+      register: installed_version_slurp
+      failed_when: false
+      changed_when: false
+
+    - name: Set Antigravity IDE version facts
+      ansible.builtin.set_fact:
+        installed_ide_version: "{{ (installed_version_slurp.content | b64decode | trim) if installed_version_slurp.content is defined else 'none' }}"
+        latest_ide_version: "{{ (resolved_ide.stdout | from_json).version }}"
+        latest_ide_url: "{{ (resolved_ide.stdout | from_json).url }}"
+
+    - name: Clean previous installation if version mismatched
+      ansible.builtin.file:
+        path: /opt/antigravity-ide
+        state: absent
+      when: installed_ide_version != latest_ide_version
+
+    - name: Create install root directory
+      ansible.builtin.file:
+        path: /opt/antigravity-ide
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      when: installed_ide_version != latest_ide_version
+
+    - name: Download and extract Antigravity IDE tarball
+      ansible.builtin.unarchive:
+        src: "{{ latest_ide_url }}"
+        dest: /opt/antigravity-ide
+        remote_src: yes
+        owner: root
+        group: root
+      when: installed_ide_version != latest_ide_version
+
+    - name: Write version stamp file
+      ansible.builtin.copy:
+        content: "{{ latest_ide_version }}\n"
+        dest: /opt/antigravity-ide/.linuxcapable-version
+        owner: root
+        group: root
+        mode: '0644'
+      when: installed_ide_version != latest_ide_version
+
+    - name: Symlink binary to path
+      ansible.builtin.file:
+        src: "/opt/antigravity-ide/Antigravity IDE/antigravity-ide"
+        dest: /usr/local/bin/antigravity-ide
+        state: link
+        force: yes
+
+    - name: Ensure Antigravity IDE launcher is executable
+      ansible.builtin.file:
+        path: "/opt/antigravity-ide/Antigravity IDE/antigravity-ide"
+        mode: '0755'
+
+    - name: Ensure icon directory exists
+      ansible.builtin.file:
+        path: /usr/share/icons/hicolor/512x512/apps
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Copy Antigravity IDE icon
+      ansible.builtin.copy:
+        src: "/opt/antigravity-ide/Antigravity IDE/resources/app/resources/linux/code.png"
+        dest: /usr/share/icons/hicolor/512x512/apps/antigravity-ide.png
+        remote_src: yes
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Create Antigravity IDE desktop launcher
+      ansible.builtin.copy:
+        dest: /usr/share/applications/antigravity-ide.desktop
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [Desktop Entry]
+          Name=Antigravity IDE
+          Comment=Google Antigravity IDE
+          Exec=/usr/local/bin/antigravity-ide %U
+          Icon=antigravity-ide
+          Terminal=false
+          Type=Application
+          Categories=Development;IDE;
+          MimeType=x-scheme-handler/antigravity-ide;application/x-antigravity-workspace;
+          StartupNotify=true
+          StartupWMClass=antigravity-ide
+
+    - name: Check if restorecon is available
+      ansible.builtin.command: which restorecon
+      register: restorecon_check
+      failed_when: false
+      changed_when: false
+
+    - name: Apply SELinux context restorecon on installed files
+      ansible.builtin.command: restorecon -R /opt/antigravity-ide /usr/local/bin/antigravity-ide /usr/share/applications/antigravity-ide.desktop /usr/share/icons/hicolor/512x512/apps/antigravity-ide.png
+      when: restorecon_check.rc == 0
+      failed_when: false
+      changed_when: false
+
+    - name: Refresh desktop database and icon caches
+      ansible.builtin.command: "{{ item }}"
+      loop:
+        - update-desktop-database /usr/share/applications
+        - gtk-update-icon-cache -q /usr/share/icons/hicolor
+      changed_when: false
+      failed_when: false
+
+    - name: Create update-antigravity-ide helper script for standalone updates
+      ansible.builtin.copy:
+        dest: /usr/local/bin/update-antigravity-ide
+        owner: root
+        group: root
+        mode: '0755'
+        content: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          if [ "$(id -u)" -ne 0 ]; then
+          	echo "Run with sudo: sudo update-antigravity-ide" >&2
+          	exit 1
+          fi
+
+          download_page="https://antigravity.google/download"
+          install_root="/opt/antigravity-ide"
+          command_link="/usr/local/bin/antigravity-ide"
+          desktop_file="/usr/share/applications/antigravity-ide.desktop"
+          icon_file="/usr/share/icons/hicolor/512x512/apps/antigravity-ide.png"
+
+          case "$(uname -m)" in
+          x86_64 | amd64) platform="linux-x64" ;;
+          aarch64 | arm64) platform="linux-arm" ;;
+          *)
+          	echo "Unsupported architecture: $(uname -m)" >&2
+          	exit 1
+          	;;
+          esac
+
+          for required_command in curl tar python3; do
+          	if ! command -v "$required_command" >/dev/null 2>&1; then
+          		echo "$required_command is required to install Antigravity IDE." >&2
+          		exit 1
+          	fi
+          done
+
+          if [ -L "$command_link" ]; then
+          	command_target=$(readlink -f "$command_link" || true)
+          	case "$command_target" in
+          	"$install_root"/*) ;;
+          	*)
+          		echo "$command_link points to $command_target. Move it before rerunning this helper." >&2
+          		exit 1
+          		;;
+          	esac
+          elif [ -e "$command_link" ]; then
+          	echo "$command_link exists and is not a symlink. Move it before rerunning this helper." >&2
+          	exit 1
+          fi
+
+          tmp_parent="${TMPDIR:-/var/tmp}"
+          mkdir -p "$tmp_parent"
+          tmpdir=$(mktemp -d "$tmp_parent/antigravity-ide.XXXXXX")
+          trap 'rm -rf "$tmpdir"' EXIT
+          download_html="$tmpdir/download.html"
+          download_js="$tmpdir/download.js"
+          archive="$tmpdir/Antigravity-IDE.tar.gz"
+          archive_list="$tmpdir/archive-list.txt"
+
+          curl -fsSL --compressed --retry 3 -o "$download_html" "$download_page"
+          main_js_url=$(
+          	python3 - "$download_html" "$download_page" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+          from urllib.parse import urljoin
+
+          html = Path(sys.argv[1]).read_text()
+          page_url = sys.argv[2]
+          matches = re.findall(r'(?:src|href)="([^"]*main-[^"]+\.js)"', html)
+          if not matches:
+              raise SystemExit("Could not find the Antigravity download bundle")
+          print(urljoin(page_url, matches[-1]))
+          PY
+          )
+
+          curl -fsSL --compressed --retry 3 -o "$download_js" "$main_js_url"
+          download_fields=$(
+          	python3 - "$download_js" "$platform" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          bundle = Path(sys.argv[1]).read_text(errors="replace")
+          platform = sys.argv[2]
+
+          # Robust search for URL pointing to Antigravity IDE tarball
+          urls = re.findall(r'href:"(https?://[^"]*/' + re.escape(platform) + r'/Antigravity(?:%20|\s)IDE\.tar\.gz)"', bundle)
+          if not urls:
+              raise SystemExit(f"Could not find an IDE download URL for {platform}")
+
+          url = urls[-1]
+          version_match = re.search(r'/stable/([^/]+)/', url)
+          if not version_match:
+              raise SystemExit("Could not parse Antigravity IDE version from download URL")
+
+          print(version_match.group(1).split("-", 1)[0], url)
+          PY
+          )
+          read -r version download_url <<<"$download_fields"
+
+          if [ -z "$version" ] || [ -z "$download_url" ]; then
+          	echo "Could not parse the Antigravity IDE download page." >&2
+          	exit 1
+          fi
+
+          expected_top_dir="Antigravity IDE"
+          expected_target="$install_root/$expected_top_dir/antigravity-ide"
+          installed_version=$(cat "$install_root/.linuxcapable-version" 2>/dev/null || true)
+          desktop_matches=no
+          if [ -f "$desktop_file" ] &&
+          	grep -q '^Icon=antigravity-ide$' "$desktop_file" &&
+          	grep -q '^StartupWMClass=antigravity-ide$' "$desktop_file"; then
+          	desktop_matches=yes
+          fi
+          if [ "$installed_version" = "$version" ] &&
+          	[ -x "$expected_target" ] &&
+          	[ -L "$command_link" ] &&
+          	[ "$(readlink -f "$command_link")" = "$expected_target" ] &&
+          	[ "$desktop_matches" = yes ] &&
+          	[ -f "$icon_file" ]; then
+          	printf 'Antigravity IDE %s is already installed at %s\n' "$version" "$install_root/$expected_top_dir"
+          	exit 0
+          fi
+
+          printf 'Downloading Antigravity IDE %s for %s...\n' "$version" "$platform"
+          curl -fsSL --retry 3 -o "$archive" "$download_url"
+          tar -tzf "$archive" >"$archive_list"
+          top_dir=$(sed -n '1{s#/.*##;p;q}' "$archive_list")
+          if [ "$top_dir" != "$expected_top_dir" ]; then
+          	echo "Unexpected archive directory: $top_dir" >&2
+          	exit 1
+          fi
+
+          tar -xzf "$archive" -C "$tmpdir"
+          if [ ! -x "$tmpdir/$top_dir/antigravity-ide" ]; then
+          	echo "The Antigravity IDE launcher was not found in the archive." >&2
+          	exit 1
+          fi
+
+          icon_source="$tmpdir/$top_dir/resources/app/resources/linux/code.png"
+          if [ ! -f "$icon_source" ]; then
+          	echo "The Antigravity IDE icon was not found in the archive." >&2
+          	exit 1
+          fi
+
+          rm -rf "${install_root}.new"
+          mkdir -p "${install_root}.new"
+          cp -a "$tmpdir/$top_dir" "${install_root}.new/"
+          printf '%s\n' "$version" >"${install_root}.new/.linuxcapable-version"
+          if [ -d "$install_root" ]; then
+          	rm -rf "${install_root}.previous"
+          	mv "$install_root" "${install_root}.previous"
+          fi
+          mv "${install_root}.new" "$install_root"
+          ln -sfn "$install_root/$top_dir/antigravity-ide" "$command_link"
+
+          mkdir -p "$(dirname "$icon_file")"
+          install -m 0644 "$icon_source" "$icon_file"
+
+          tee "$desktop_file" >/dev/null <<DESKTOP
+          [Desktop Entry]
+          Name=Antigravity IDE
+          Comment=Google Antigravity IDE
+          Exec=$command_link %U
+          Icon=antigravity-ide
+          Terminal=false
+          Type=Application
+          Categories=Development;IDE;
+          MimeType=x-scheme-handler/antigravity-ide;application/x-antigravity-workspace;
+          StartupNotify=true
+          StartupWMClass=antigravity-ide
+          DESKTOP
+
+          if command -v restorecon >/dev/null 2>&1; then
+          	restorecon -R "$install_root" "$command_link" "$desktop_file" "$icon_file" 2>/dev/null || true
+          fi
+
+          if command -v update-desktop-database >/dev/null 2>&1; then
+          	update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
+          fi
+
+          if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+          	gtk-update-icon-cache -q /usr/share/icons/hicolor 2>/dev/null || true
+          fi
+
+          printf 'Installed Antigravity IDE %s at %s\n' "$version" "$install_root/$top_dir"
+
+    # ==========================================================================
     # SHELL & USABILITY POLISH
     # ==========================================================================
     - name: Change user default shell to Zsh
@@ -305,6 +743,9 @@
           # Enable syntax highlighting and autosuggestions from DNF packages
           source /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
           source /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh
+
+          # Ensure local bin is in PATH (required for agy CLI)
+          export PATH="$HOME/.local/bin:$PATH"
 
           # Sane Zsh options
           setopt HIST_IGNORE_DUPS
