@@ -63,8 +63,10 @@ This single command will install `git` and `ansible`, clone this repository into
     - Ensures `flatpak` is installed.
     - Registers the **Flathub** remote repository.
     - Removes the limited Fedora-centric Flatpak remote to ensure Flathub is your clean, exclusive source for Flatpaks.
-13. **Font Polish (Nerd Fonts)**:
-    - Automatically downloads and extracts the official **Fira Code Nerd Font** into the user's local fonts directory (`~/.local/share/fonts/`) and rebuilds the font cache so Starship icons display correctly.
+13. **Font Polish (Nerd Fonts & Microsoft Fonts)**:
+    - Automatically downloads and extracts the official **Fira Code Nerd Font** into the user's local fonts directory (`~/.local/share/fonts/`) for terminal prompt icon support.
+    - Downloads and installs the **Microsoft TrueType Core Fonts** (Arial, Times New Roman, Verdana, etc.) via the community installer using `cabextract` and `mkfontscale`.
+    - Automatically rebuilds the system font cache so all new fonts are immediately available.
 14. **Usability & Shell Customization (Zsh)**:
     - Installs **Zsh** and official shell plugins: **zsh-syntax-highlighting** and **zsh-autosuggestions**.
     - Sets your default system shell to **Zsh**.

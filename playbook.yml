@@ -323,7 +323,7 @@
       changed_when: false
 
     # ==========================================================================
-    # NERD FONTS (REQUIRED FOR STARSHIP ICONS)
+    # FONTS (NERD FONTS & MICROSOFT CORE FONTS)
     # ==========================================================================
     - name: Create local fonts directory
       ansible.builtin.file:
@@ -340,6 +340,25 @@
         remote_src: yes
         owner: "{{ target_user.name }}"
         group: "{{ target_user.group }}"
+
+    - name: Check if Microsoft fonts installer is already installed
+      ansible.builtin.command: rpm -q msttcore-fonts-installer
+      register: mscorefonts_check
+      failed_when: false
+      changed_when: false
+
+    - name: Ensure Microsoft fonts dependencies are installed
+      ansible.builtin.dnf:
+        name:
+          - curl
+          - cabextract
+          - fontconfig
+          - mkfontscale
+        state: present
+
+    - name: Install Microsoft fonts installer ignoring dependencies
+      ansible.builtin.command: rpm -i --nodeps --nodigest https://downloads.sourceforge.net/project/mscorefonts2/rpms/msttcore-fonts-installer-2.6-1.noarch.rpm
+      when: mscorefonts_check.rc != 0
 
     - name: Rebuild font cache
       ansible.builtin.command: fc-cache -f
