@@ -57,6 +57,13 @@ configure_dnf_speedups() {
 configure_dnf_speedups "/etc/dnf/dnf.conf"
 configure_dnf_speedups "/etc/dnf5/dnf.conf"
 
+# ==============================================================================
+# REMOVE UNWANTED DEFAULT APPLICATIONS
+# ==============================================================================
+echo "--> Uninstalling Firefox and LibreOffice..."
+dnf remove -y 'firefox*' 'libreoffice*'
+
+
 echo "--> Upgrading all system packages..."
 dnf upgrade -y
 
@@ -164,19 +171,6 @@ with open('$WORKSTATION_REPOS', 'w') as f:
     config.write(f)
 "
 fi
-
-# ==============================================================================
-# REMOVE UNWANTED DEFAULT APPLICATIONS
-# ==============================================================================
-echo "--> Checking and uninstalling Firefox, LibreOffice, and conflicting packages..."
-PACKAGES_TO_REMOVE=$(rpm -qa --qf "%{NAME}\n" | grep -E '^(firefox|libreoffice|unoconv|anaconda-webui)' | tr '\n' ' ')
-if [ -n "$PACKAGES_TO_REMOVE" ]; then
-    echo "Removing packages: $PACKAGES_TO_REMOVE"
-    dnf remove -y $PACKAGES_TO_REMOVE
-else
-    echo "No matching packages to remove."
-fi
-
 # ==============================================================================
 # APPLICATIONS & MULTIMEDIA SWAP (MUST RUN INDEPENDENTLY FOR ALLOWERASING)
 # ==============================================================================

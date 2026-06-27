@@ -21,23 +21,22 @@ This single command fetches the setup script directly and executes it with root 
 ## What this Script Does
 
 1. **DNF Speed Optimizations**: Configures `max_parallel_downloads=20`, `fastestmirror=True`, and `defaultyes=True` for both DNF and DNF5 to make package updates much faster.
-2. **System-wide Package Upgrade**: Upgrades all pre-installed system packages to their latest versions to ensure stability, safety, and resolve potential version conflicts.
-3. **Repository Configuration**:
+2. **App Cleanup (Removal)**: Uninstalls standard default applications: **Firefox** and **LibreOffice** (using native wildcards to automatically remove related packages like `anaconda-webui` and `unoconv`), saving bandwidth and preventing dependency conflicts during the system upgrade.
+3. **System-wide Package Upgrade**: Upgrades all pre-installed system packages to their latest versions to ensure stability, safety, and resolve potential version conflicts.
+4. **Repository Configuration**:
    - Enables **RPM Fusion (Free & Non-Free)** repositories.
    - Enables the **Terra Repository** (maintained by Fyra Labs) to fetch tools like Starship and System76 Scheduler.
    - Configures the official repositories for **Visual Studio Code**, **Brave Browser**, **Google Chrome**, and the **Google Cloud CLI**.
    - Disables unused, limited third-party repositories (**NVIDIA** and **Steam** subsets) to prevent DNF metadata check bloat on AMD hardware.
-4. **General Linux & Storage Optimizations**:
+5. **General Linux & Storage Optimizations**:
    - **Swappiness Tuning**: Configures `vm.swappiness = 10` via a custom sysctl drop-in file (`/etc/sysctl.d/99-swappiness.conf`) to optimize memory pages and reduce SSD swap wear.
    - **Btrfs Performance Tuning**: Safely updates `/etc/fstab` to append the `noatime` option to Btrfs subvolumes (`root` and `home`), reducing write amplification on SSDs/NVMes and remounts filesystems immediately.
-5. **GNOME Customization & Desktop Tweaks**:
+6. **GNOME Customization & Desktop Tweaks**:
    - Installs **GNOME Tweaks** and the graphical **GNOME Extensions App**.
    - Installs and enables the popular **Dash to Dock** (dock UI) and **AppIndicator** (system tray icons) extensions.
    - Natively fetches, extracts, and activates the **Bluetooth Quick Connect** extension (allows connecting to paired Bluetooth devices directly from the Quick Settings menu).
    - Configures native window controls to **enable Minimize and Maximize buttons** (which are disabled by default in Fedora Workstation).
    - Sets the global system color scheme preference to **Dark Mode**.
-6. **App Cleanup (Removal)**:
-   - Uninstalls standard default applications: **Firefox** and **LibreOffice** (all core and interface packages), along with the installer WebUI helper package (`anaconda-webui`) and `unoconv` to prevent dependency conflicts.
 7. **Multimedia Swap**:
    - Swaps out Fedora's restricted `ffmpeg-free` for full `ffmpeg` from RPM Fusion.
    - Installs the `@multimedia` package group (disabling weak dependencies and excluding PackageKit GStreamer plugins as recommended by RPM Fusion).
