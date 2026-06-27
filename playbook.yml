@@ -11,7 +11,7 @@
     # ==========================================================================
     - name: Identify the non-root user and home directory
       ansible.builtin.user:
-        name: "{{ ansible_env.SUDO_USER | default(ansible_user_id) }}"
+        name: "{{ ansible_facts.env.SUDO_USER | default(ansible_facts.user_id) }}"
       register: target_user
 
     # ==========================================================================
@@ -47,6 +47,12 @@
         - { key: 'fastestmirror', value: 'True' }
       when: dnf5_conf_stat.stat.exists
 
+    - name: Upgrade all packages to their latest versions
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+        update_cache: yes
+
     # ==========================================================================
     # SYSTEM OPTIMIZATIONS (SWAPPINESS & BTRFS)
     # ==========================================================================
@@ -78,13 +84,13 @@
     # ==========================================================================
     - name: Install RPM Fusion Free repository
       ansible.builtin.dnf:
-        name: "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-{{ ansible_distribution_major_version }}.noarch.rpm"
+        name: "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-{{ ansible_facts.distribution_major_version }}.noarch.rpm"
         state: present
         disable_gpg_check: yes
 
     - name: Install RPM Fusion Nonfree repository
       ansible.builtin.dnf:
-        name: "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-{{ ansible_distribution_major_version }}.noarch.rpm"
+        name: "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-{{ ansible_facts.distribution_major_version }}.noarch.rpm"
         state: present
         disable_gpg_check: yes
 
@@ -156,17 +162,16 @@
     # ==========================================================================
     # REMOVE UNWANTED DEFAULT APPLICATIONS
     # ==========================================================================
-    - name: Uninstall Firefox and LibreOffice
+    - name: Gather package facts
+      ansible.builtin.package_facts:
+        manager: auto
+
+    - name: Uninstall Firefox, LibreOffice, and related packages
       ansible.builtin.dnf:
-        name:
-          - firefox
-          - libreoffice-core
-          - libreoffice-calc
-          - libreoffice-writer
-          - libreoffice-impress
-          - libreoffice-draw
-          - libreoffice-math
+        name: "{{ ansible_facts.packages.keys() | select('match', '^(firefox|libreoffice|unoconv)') | list }}"
         state: absent
+      when: ansible_facts.packages.keys() | select('match', '^(firefox|libreoffice|unoconv)') | list | length > 0
+
 
     # ==========================================================================
     # APPLICATIONS & MULTIMEDIA
@@ -422,7 +427,7 @@
           amd64: linux-x64
           aarch64: linux-arm
           arm64: linux-arm
-        platform: "{{ platform_map[ansible_architecture] | default('linux-x64') }}"
+        platform: "{{ platform_map[ansible_facts.architecture] | default('linux-x64') }}"
       register: resolved_ide
       changed_when: false
 

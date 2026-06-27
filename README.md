@@ -21,53 +21,54 @@ This single command will install `git` and `ansible`, clone this repository into
 ## What this Playbook Does
 
 1. **DNF Speed Optimizations**: Configures `max_parallel_downloads=20`, `fastestmirror=True`, and `defaultyes=True` for both DNF and DNF5.
-2. **Repository Configuration**:
+2. **System-wide Package Upgrade**: Upgrades all pre-installed system packages to their latest versions to ensure stability, safety, and resolve version conflicts.
+3. **Repository Configuration**:
    - Enables **RPM Fusion (Free & Non-Free)** repositories.
    - Enables the **Terra Repository** (maintained by Fyra Labs) to fetch tools like Starship and System76 Scheduler.
    - Configures the official repositories for **Visual Studio Code**, **Brave Browser**, **Google Chrome**, and the **Google Cloud CLI**.
    - Disables unused, limited third-party repositories (**NVIDIA** and **Steam** subsets) to prevent DNF metadata check bloat on AMD hardware.
-3. **General Linux & Storage Optimizations**:
+4. **General Linux & Storage Optimizations**:
    - **Swappiness Tuning**: Configures `vm.swappiness = 10` via a custom sysctl drop-in file (`/etc/sysctl.d/99-swappiness.conf`) to optimize memory pages and reduce SSD swap wear.
    - **Btrfs Performance Tuning**: Safely updates `/etc/fstab` to append the `noatime` option to Btrfs subvolumes (`root` and `home`), reducing write amplification on SSDs/NVMes and remounts filesystems immediately.
-4. **GNOME Customization & Desktop Tweaks**:
+5. **GNOME Customization & Desktop Tweaks**:
    - Installs **GNOME Tweaks** and the graphical **GNOME Extensions App**.
    - Installs and enables the popular **Dash to Dock** (dock UI) and **AppIndicator** (system tray icons) extensions.
    - Natively fetches, extracts, and activates the **Bluetooth Quick Connect** extension (allows connecting to paired Bluetooth devices directly from the Quick Settings menu).
    - Configures native window controls to **enable Minimize and Maximize buttons** (which are disabled by default in Fedora Workstation).
    - Sets the global system color scheme preference to **Dark Mode**.
-5. **App Cleanup (Removal)**:
+6. **App Cleanup (Removal)**:
    - Uninstalls standard default applications: **Firefox** and **LibreOffice** (all core and interface packages).
-6. **Desktop Applications**:
+7. **Desktop Applications**:
    - Installs **OnlyOffice Desktop Editors** via Flatpak (Flathub).
    - Installs **Visual Studio Code**, **Brave Browser**, and **Google Chrome**.
    - Installs **VLC** media player and **GNOME Boxes** (virtualization tool).
-7. **Cloud & Agent CLIs**:
+8. **Cloud & Agent CLIs**:
    - Installs the **Google Cloud CLI (`gcloud`)** and its cryptography dependency (`libxcrypt-compat`).
    - Downloads and installs the **Antigravity CLI (`agy`)** natively under the target user's directory (`~/.local/bin/agy`) using its official installer.
-8. **Antigravity IDE (Standalone)**:
+9. **Antigravity IDE (Standalone)**:
    - Registers a custom updater helper script (`/usr/local/bin/update-antigravity-ide`).
    - Dynamically resolves, downloads, and extracts the latest Antigravity IDE Linux tarball (supporting x64 and ARM64 architectures) from the official download site to `/opt/antigravity-ide`.
    - Creates a global command command launcher (`/usr/local/bin/antigravity-ide`), configures the application icon, and creates a GNOME application menu launcher (`antigravity-ide.desktop`).
    - Enables subsequent updates/refreshes of the IDE using `sudo update-antigravity-ide`.
-9. **Developer Toolchains & Build Tools**:
-   - Installs the official Fedora **Development Tools** group (`make`, `gcc`, `g++`, `git`, `patch`, etc.).
-   - Installs developers runtimes: **Golang (Go)**, **Node.js**, **Python 3** (including pip and development headers), and the latest version of the **Java OpenJDK Runtime (JRE)**.
-   - Installs **Distrobox** for managing containerized Linux development environments.
-10. **Multimedia Support**:
+10. **Developer Toolchains & Build Tools**:
+    - Installs the official Fedora **Development Tools** group (`make`, `gcc`, `g++`, `git`, `patch`, etc.).
+    - Installs developers runtimes: **Golang (Go)**, **Node.js**, **Python 3** (including pip and development headers), and the latest version of the **Java OpenJDK Runtime (JRE)**.
+    - Installs **Distrobox** for managing containerized Linux development environments.
+11. **Multimedia Support**:
     - Swaps out Fedora's restricted `ffmpeg-free` for full `ffmpeg` from RPM Fusion.
     - Installs the `@multimedia` package group (disabling weak dependencies and excluding PackageKit GStreamer plugins as recommended by RPM Fusion).
     - Installs common GStreamer codecs.
-11. **System Scheduler & Performance**:
+12. **System Scheduler & Performance**:
     - Installs and enables the **System76 CPU Scheduler** (`system76-scheduler`) to prioritize foreground desktop processes and improve user interface responsiveness.
-12. **Flatpak Integration**:
+13. **Flatpak Integration**:
     - Ensures `flatpak` is installed.
     - Registers the **Flathub** remote repository.
     - Removes the limited Fedora-centric Flatpak remote to ensure Flathub is your clean, exclusive source for Flatpaks.
-13. **Font Polish (Nerd Fonts & Microsoft Fonts)**:
+14. **Font Polish (Nerd Fonts & Microsoft Fonts)**:
     - Automatically downloads and extracts the official **Fira Code Nerd Font** into the user's local fonts directory (`~/.local/share/fonts/`) for terminal prompt icon support.
     - Downloads and installs the **Microsoft TrueType Core Fonts** (Arial, Times New Roman, Verdana, etc.) via the community installer using `cabextract` and `mkfontscale`.
     - Automatically rebuilds the system font cache so all new fonts are immediately available.
-14. **Usability & Shell Customization (Zsh)**:
+15. **Usability & Shell Customization (Zsh)**:
     - Installs **Zsh** and official shell plugins: **zsh-syntax-highlighting** and **zsh-autosuggestions**.
     - Sets your default system shell to **Zsh**.
     - Configures `~/.zshrc` to initialize the **Starship** shell prompt, expose the local binary path (`~/.local/bin`), and source the interactive shell plugins automatically.
