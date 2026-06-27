@@ -94,6 +94,36 @@ echo "--> Restarting NetworkManager to ensure connectivity..."
 systemctl restart NetworkManager
 sleep 3
 
+echo "--> Enabling weekly SSD TRIM timer..."
+systemctl enable fstrim.timer || true
+
+echo "--> Configuring udev rules for HDD auto-spindown..."
+mkdir -p /etc/udev/rules.d
+cat <<EOF > /etc/udev/rules.d/69-hdparm.rules
+# Automatically spin down mechanical/rotational HDDs after 10 minutes of inactivity
+ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="1", RUN+="/usr/sbin/hdparm -B 127 -S 120 /dev/%k"
+EOF
+udevadm control --reload-rules && udevadm trigger || true
+
+echo "--> Enabling Bluetooth battery status reporting..."
+if [ -f /etc/bluetooth/main.conf ]; then
+    python3 -c "
+import re
+path = '/etc/bluetooth/main.conf'
+with open(path, 'r') as f:
+    content = f.read()
+if not re.search(r'(?m)^Experimental\s*=\s*true', content):
+    if re.search(r'(?m)^#\s*Experimental\s*=\s*', content):
+        content = re.sub(r'(?m)^#\s*Experimental\s*=\s*.*', r'Experimental=true', content)
+    else:
+        content = re.sub(r'(?m)^\[General\]', '[General]\nExperimental=true', content)
+    with open(path, 'w') as f:
+        f.write(content)
+"
+    systemctl restart bluetooth || true
+fi
+
+
 # ==============================================================================
 # REPOSITORIES SETUP
 # ==============================================================================
@@ -156,6 +186,9 @@ gpgkey=https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
 enabled=1
 EOF
 
+echo "--> Enabling CachyOS COPR repository for sched-ext..."
+dnf copr enable -y bieszczaders/kernel-cachyos-addons
+
 # Disable unused workstation repositories if file exists
 WORKSTATION_REPOS="/etc/yum.repos.d/fedora-workstation-repositories.repo"
 if [ -f "$WORKSTATION_REPOS" ]; then
@@ -190,35 +223,41 @@ dnf install -y \
   code brave-browser google-chrome-stable google-cloud-cli libxcrypt-compat \
   golang nodejs python3 python3-pip python3-devel java-latest-openjdk distrobox zsh zsh-syntax-highlighting zsh-autosuggestions \
   gnome-tweaks gnome-extensions-app gnome-shell-extension-dash-to-dock gnome-shell-extension-appindicator \
-  system76-scheduler flatpak cabextract mkfontscale fontconfig
+  scx-scheds scx-tools flatpak cabextract mkfontscale fontconfig mesa-va-drivers-freeworld mesa-vdpau-drivers-freeworld intel-media-driver hdparm
 
 # ==============================================================================
 # GNOME CONFIGURATIONS
 # ==============================================================================
 if [ "$TARGET_USER" != "root" ]; then
-    echo "--> Installing Bluetooth Quick Connect GNOME extension..."
+    echo "--> Installing GNOME Shell extensions (Bluetooth Quick Connect & Blur my Shell)..."
     sudo -u "$TARGET_USER" python3 - <<'PY'
 import urllib.request, json, os, subprocess, zipfile
 try:
     shell_ver = subprocess.check_output(["gnome-shell", "--version"]).decode().split()[-1]
-    url = f"https://extensions.gnome.org/extension-info/?pk=1401&shell_version={shell_ver}"
-    req = urllib.request.urlopen(url)
-    data = json.loads(req.read().decode())
-    download_url = "https://extensions.gnome.org" + data["download_url"]
-    uuid = data["uuid"]
-    ext_dir = os.path.expanduser(f"~/.local/share/gnome-shell/extensions/{uuid}")
-    os.makedirs(ext_dir, exist_ok=True)
-    zip_path, _ = urllib.request.urlretrieve(download_url)
-    with zipfile.ZipFile(zip_path, "r") as zip_ref:
-        zip_ref.extractall(ext_dir)
-    os.remove(zip_path)
-    print(f"Bluetooth Quick Connect ({uuid}) installed.")
+    extensions = [
+        "bluetooth-quick-connect@bjarosze.github.io",
+        "blur-my-shell@aunetx"
+    ]
+    for uuid in extensions:
+        print(f"Fetching metadata for {uuid}...")
+        url = f"https://extensions.gnome.org/extension-info/?uuid={uuid}&shell_version={shell_ver}"
+        req = urllib.request.urlopen(url)
+        data = json.loads(req.read().decode())
+        download_url = "https://extensions.gnome.org" + data["download_url"]
+        
+        ext_dir = os.path.expanduser(f"~/.local/share/gnome-shell/extensions/{uuid}")
+        os.makedirs(ext_dir, exist_ok=True)
+        zip_path, _ = urllib.request.urlretrieve(download_url)
+        with zipfile.ZipFile(zip_path, "r") as zip_ref:
+            zip_ref.extractall(ext_dir)
+        os.remove(zip_path)
+        print(f"Extension {uuid} installed successfully.")
 except Exception as e:
     print(f"Error installing extension: {e}")
 PY
 
     echo "--> Enabling GNOME Shell Extensions..."
-    for ext in dash-to-dock@micxgx.gmail.com appindicatorsupport@rgcjonas.gmail.com bluetooth-quick-connect@bjarosze.github.io; do
+    for ext in dash-to-dock@micxgx.gmail.com appindicatorsupport@rgcjonas.gmail.com bluetooth-quick-connect@bjarosze.github.io blur-my-shell@aunetx; do
         sudo -u "$TARGET_USER" dbus-run-session gnome-extensions enable "$ext" || true
     done
 
@@ -230,8 +269,12 @@ fi
 # ==============================================================================
 # PERFORMANCE SCHEDULER & FLATPAK
 # ==============================================================================
-echo "--> Enabling System76 CPU Scheduler..."
-systemctl enable --now system76-scheduler
+echo "--> Configuring sched-ext (SCX) to use scx_rustland..."
+mkdir -p /etc/default
+echo "SCX_SCHEDULER=scx_rustland" > /etc/default/scx
+
+echo "--> Enabling and starting sched-ext (SCX) service..."
+systemctl enable --now scx || systemctl enable --now scx.service
 
 echo "--> Setting up Flatpaks (OnlyOffice)..."
 flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || true
@@ -239,6 +282,7 @@ if flatpak remote-list | grep -q '^fedora'; then
     flatpak remote-delete fedora || true
 fi
 flatpak install -y flathub org.onlyoffice.desktopeditors || true
+flatpak install -y flathub com.github.tchx84.Flatseal || true
 
 # ==============================================================================
 # FONTS (NERD FONTS & MICROSOFT CORE FONTS)
