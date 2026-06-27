@@ -77,8 +77,15 @@ new_content = re.sub(r'(?m)^(\S+\s+\S+\s+btrfs\s+)(?!.*noatime)(\S+)(.*)$', r'\g
 with open('/etc/fstab', 'w') as f:
     f.write(new_content)
 "
+echo "--> Reloading systemd daemon to refresh mounts..."
+systemctl daemon-reload
+
 echo "--> Remounting root filesystem..."
 mount -o remount / || true
+
+echo "--> Restarting NetworkManager to ensure connectivity..."
+systemctl restart NetworkManager
+sleep 3
 
 # ==============================================================================
 # REPOSITORIES SETUP
