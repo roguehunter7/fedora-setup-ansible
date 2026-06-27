@@ -168,9 +168,9 @@
 
     - name: Uninstall Firefox, LibreOffice, and related packages
       ansible.builtin.dnf:
-        name: "{{ ansible_facts.packages.keys() | select('match', '^(firefox|libreoffice|unoconv)') | list }}"
+        name: "{{ ansible_facts.packages.keys() | select('match', '^(firefox|libreoffice|unoconv|anaconda-webui)') | list }}"
         state: absent
-      when: ansible_facts.packages.keys() | select('match', '^(firefox|libreoffice|unoconv)') | list | length > 0
+      when: ansible_facts.packages.keys() | select('match', '^(firefox|libreoffice|unoconv|anaconda-webui)') | list | length > 0
 
 
     # ==========================================================================
