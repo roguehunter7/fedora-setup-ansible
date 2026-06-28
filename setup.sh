@@ -235,38 +235,111 @@ if [ "$TARGET_USER" != "root" ]; then
     echo "--> Installing GNOME Shell extensions (Bluetooth Quick Connect & Blur my Shell)..."
     sudo -u "$TARGET_USER" python3 - <<'PY'
 import urllib.request, json, os, subprocess, zipfile
+
 try:
-    shell_ver = subprocess.check_output(["gnome-shell", "--version"]).decode().split()[-1]
+    try:
+        shell_ver = subprocess.check_output(["gnome-shell", "--version"]).decode().split()[-1]
+    except Exception:
+        shell_ver = "47"
+        
     extensions = [
         "bluetooth-quick-connect@bjarosze.github.io",
         "blur-my-shell@aunetx"
     ]
+    
     for uuid in extensions:
         print(f"Fetching metadata for {uuid}...")
         url = f"https://extensions.gnome.org/extension-info/?uuid={uuid}&shell_version={shell_ver}"
-        req = urllib.request.urlopen(url)
-        data = json.loads(req.read().decode())
-        download_url = "https://extensions.gnome.org" + data["download_url"]
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        data = None
         
-        ext_dir = os.path.expanduser(f"~/.local/share/gnome-shell/extensions/{uuid}")
-        os.makedirs(ext_dir, exist_ok=True)
-        zip_path, _ = urllib.request.urlretrieve(download_url)
-        with zipfile.ZipFile(zip_path, "r") as zip_ref:
-            zip_ref.extractall(ext_dir)
-        os.remove(zip_path)
-        print(f"Extension {uuid} installed successfully.")
+        # 1. Try querying version-specific metadata
+        try:
+            with urllib.request.urlopen(req) as response:
+                data = json.loads(response.read().decode())
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                print(f"Version-specific metadata for GNOME {shell_ver} returned 404. Fetching latest available release...")
+            else:
+                print(f"HTTP error fetching version-specific metadata: {e}")
+        except Exception as e:
+            print(f"Error fetching version-specific metadata: {e}")
+            
+        # 2. Fallback to querying general metadata without version restrictions
+        if data is None:
+            url_fallback = f"https://extensions.gnome.org/extension-info/?uuid={uuid}"
+            req_fallback = urllib.request.Request(url_fallback, headers={'User-Agent': 'Mozilla/5.0'})
+            try:
+                with urllib.request.urlopen(req_fallback) as response:
+                    data_fallback = json.loads(response.read().decode())
+                    releases = []
+                    for s_ver, info in data_fallback.get("shell_version_map", {}).items():
+                        if "version" in info and "pk" in info:
+                            releases.append((info["version"], info["pk"]))
+                    if releases:
+                        releases.sort(key=lambda x: x[0])
+                        latest_pk = releases[-1][1]
+                        data = {
+                            "download_url": f"/download-extension/{uuid}.shell-extension.zip?version_tag={latest_pk}"
+                        }
+                    else:
+                        print("No releases found in metadata version map.")
+            except Exception as e:
+                print(f"Failed to query fallback metadata: {e}")
+                
+        if data and "download_url" in data:
+            download_url = "https://extensions.gnome.org" + data["download_url"]
+            print(f"Downloading from {download_url}...")
+            
+            ext_dir = os.path.expanduser(f"~/.local/share/gnome-shell/extensions/{uuid}")
+            os.makedirs(ext_dir, exist_ok=True)
+            
+            dl_req = urllib.request.Request(download_url, headers={'User-Agent': 'Mozilla/5.0'})
+            zip_path = os.path.expanduser(f"~/temp_ext_{uuid}.zip")
+            try:
+                with urllib.request.urlopen(dl_req) as dl_resp, open(zip_path, 'wb') as out_file:
+                    out_file.write(dl_resp.read())
+                with zipfile.ZipFile(zip_path, "r") as zip_ref:
+                    zip_ref.extractall(ext_dir)
+                print(f"Extension {uuid} installed successfully.")
+            except Exception as e:
+                print(f"Failed to download or extract extension {uuid}: {e}")
+            finally:
+                if os.path.exists(zip_path):
+                    os.remove(zip_path)
+        else:
+            print(f"Skipping {uuid}: download URL could not be resolved.")
 except Exception as e:
-    print(f"Error installing extension: {e}")
+    print(f"General error in extension installation process: {e}")
 PY
 
     echo "--> Enabling GNOME Shell Extensions..."
+    user_dbus_addr=""
+    user_pid=$(pgrep -u "$TARGET_USER" gnome-shell | head -n 1)
+    if [ -z "$user_pid" ]; then
+        user_pid=$(pgrep -u "$TARGET_USER" -f "session" | head -n 1)
+    fi
+    if [ -n "$user_pid" ]; then
+        user_dbus_addr=$(grep -z DBUS_SESSION_BUS_ADDRESS "/proc/$user_pid/environ" | cut -d= -f2- | tr -d '\0' || true)
+    fi
+
     for ext in dash-to-dock@micxgx.gmail.com appindicatorsupport@rgcjonas.gmail.com bluetooth-quick-connect@bjarosze.github.io blur-my-shell@aunetx; do
-        sudo -u "$TARGET_USER" dbus-run-session gnome-extensions enable "$ext" || true
+        if [ -n "$user_dbus_addr" ]; then
+            sudo -u "$TARGET_USER" DBUS_SESSION_BUS_ADDRESS="$user_dbus_addr" gnome-extensions enable "$ext" || \
+            sudo -u "$TARGET_USER" dbus-run-session gnome-extensions enable "$ext" || true
+        else
+            sudo -u "$TARGET_USER" dbus-run-session gnome-extensions enable "$ext" || true
+        fi
     done
 
     echo "--> Configuring GNOME preferences (Window button layout and Dark Mode)..."
-    sudo -u "$TARGET_USER" dbus-run-session gsettings set org.gnome.desktop.wm.preferences button-layout "appmenu:minimize,maximize,close" || true
-    sudo -u "$TARGET_USER" dbus-run-session gsettings set org.gnome.desktop.interface color-scheme "prefer-dark" || true
+    if [ -n "$user_dbus_addr" ]; then
+        sudo -u "$TARGET_USER" DBUS_SESSION_BUS_ADDRESS="$user_dbus_addr" gsettings set org.gnome.desktop.wm.preferences button-layout "appmenu:minimize,maximize,close" || true
+        sudo -u "$TARGET_USER" DBUS_SESSION_BUS_ADDRESS="$user_dbus_addr" gsettings set org.gnome.desktop.interface color-scheme "prefer-dark" || true
+    else
+        sudo -u "$TARGET_USER" dbus-run-session gsettings set org.gnome.desktop.wm.preferences button-layout "appmenu:minimize,maximize,close" || true
+        sudo -u "$TARGET_USER" dbus-run-session gsettings set org.gnome.desktop.interface color-scheme "prefer-dark" || true
+    fi
 fi
 
 # ==============================================================================
@@ -277,7 +350,7 @@ mkdir -p /etc/default
 echo "SCX_SCHEDULER=scx_rustland" > /etc/default/scx
 
 echo "--> Enabling and starting sched-ext (SCX) service..."
-systemctl enable --now scx || systemctl enable --now scx.service
+systemctl enable --now scx_loader || systemctl enable --now scx || true
 
 echo "--> Setting up Flatpaks (Flatseal)..."
 flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || true
