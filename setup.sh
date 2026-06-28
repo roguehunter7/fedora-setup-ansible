@@ -14,6 +14,10 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
+# Redirect standard input from /dev/null to prevent commands from swallowing the script when piped (e.g. curl | bash)
+exec < /dev/null
+
+
 # ==============================================================================
 # USER DISCOVERY
 # ==============================================================================
@@ -77,14 +81,7 @@ chmod 0644 /etc/sysctl.d/99-swappiness.conf
 sysctl -p /etc/sysctl.d/99-swappiness.conf >/dev/null || true
 
 echo "--> Enabling noatime mount option for Btrfs volumes in /etc/fstab..."
-python3 -c "
-import re
-with open('/etc/fstab', 'r') as f:
-    content = f.read()
-new_content = re.sub(r'(?m)^(\S+\s+\S+\s+btrfs\s+)(?!.*noatime)(\S+)(.*)$', r'\g<1>\g<2>,noatime\3', content)
-with open('/etc/fstab', 'w') as f:
-    f.write(new_content)
-"
+sed -i '/\sbtrfs\s/{/noatime/!s/\(subvol=[^[:space:],]*\)/\1,noatime/}' /etc/fstab
 echo "--> Reloading systemd daemon to refresh mounts..."
 systemctl daemon-reload
 
@@ -108,19 +105,11 @@ udevadm control --reload-rules && udevadm trigger || true
 
 echo "--> Enabling Bluetooth battery status reporting..."
 if [ -f /etc/bluetooth/main.conf ]; then
-    python3 -c "
-import re
-path = '/etc/bluetooth/main.conf'
-with open(path, 'r') as f:
-    content = f.read()
-if not re.search(r'(?m)^Experimental\s*=\s*true', content):
-    if re.search(r'(?m)^#\s*Experimental\s*=\s*', content):
-        content = re.sub(r'(?m)^#\s*Experimental\s*=\s*.*', r'Experimental=true', content)
-    else:
-        content = re.sub(r'(?m)^\[General\]', '[General]\nExperimental=true', content)
-    with open(path, 'w') as f:
-        f.write(content)
-"
+    if grep -q '^#.*Experimental' /etc/bluetooth/main.conf; then
+        sed -i 's/^#.*Experimental.*/Experimental=true/' /etc/bluetooth/main.conf
+    elif ! grep -q '^Experimental.*=.*true' /etc/bluetooth/main.conf; then
+        sed -i '/^\[General\]/a Experimental=true' /etc/bluetooth/main.conf
+    fi
     systemctl restart bluetooth || true
 fi
 
@@ -194,16 +183,9 @@ dnf copr enable -y bieszczaders/kernel-cachyos-addons
 WORKSTATION_REPOS="/etc/yum.repos.d/fedora-workstation-repositories.repo"
 if [ -f "$WORKSTATION_REPOS" ]; then
     echo "--> Disabling unused Workstation repositories (NVIDIA & Steam)..."
-    python3 -c "
-import configparser
-config = configparser.ConfigParser(strict=False)
-config.read('$WORKSTATION_REPOS')
-for section in ['rpmfusion-nonfree-nvidia-driver', 'rpmfusion-steam']:
-    if config.has_section(section):
-        config.set(section, 'enabled', '0')
-with open('$WORKSTATION_REPOS', 'w') as f:
-    config.write(f)
-"
+    for section in rpmfusion-nonfree-nvidia-driver rpmfusion-steam; do
+        sed -i "/^\[$section\]/,/^\[/{s/^enabled=.*/enabled=0/}" "$WORKSTATION_REPOS"
+    done
 fi
 # ==============================================================================
 # APPLICATIONS & MULTIMEDIA SWAP (MUST RUN INDEPENDENTLY FOR ALLOWERASING)
@@ -232,114 +214,22 @@ dnf install -y \
 # GNOME CONFIGURATIONS
 # ==============================================================================
 if [ "$TARGET_USER" != "root" ]; then
-    echo "--> Installing GNOME Shell extensions (Bluetooth Quick Connect & Blur my Shell)..."
-    sudo -u "$TARGET_USER" python3 - <<'PY'
-import urllib.request, json, os, subprocess, zipfile
-
-try:
-    try:
-        shell_ver = subprocess.check_output(["gnome-shell", "--version"]).decode().split()[-1]
-    except Exception:
-        shell_ver = "47"
-        
-    extensions = [
-        "bluetooth-quick-connect@bjarosze.github.io",
-        "blur-my-shell@aunetx"
-    ]
-    
-    for uuid in extensions:
-        print(f"Fetching metadata for {uuid}...")
-        url = f"https://extensions.gnome.org/extension-info/?uuid={uuid}&shell_version={shell_ver}"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        data = None
-        
-        # 1. Try querying version-specific metadata
-        try:
-            with urllib.request.urlopen(req) as response:
-                data = json.loads(response.read().decode())
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
-                print(f"Version-specific metadata for GNOME {shell_ver} returned 404. Fetching latest available release...")
-            else:
-                print(f"HTTP error fetching version-specific metadata: {e}")
-        except Exception as e:
-            print(f"Error fetching version-specific metadata: {e}")
-            
-        # 2. Fallback to querying general metadata without version restrictions
-        if data is None:
-            url_fallback = f"https://extensions.gnome.org/extension-info/?uuid={uuid}"
-            req_fallback = urllib.request.Request(url_fallback, headers={'User-Agent': 'Mozilla/5.0'})
-            try:
-                with urllib.request.urlopen(req_fallback) as response:
-                    data_fallback = json.loads(response.read().decode())
-                    releases = []
-                    for s_ver, info in data_fallback.get("shell_version_map", {}).items():
-                        if "version" in info and "pk" in info:
-                            releases.append((info["version"], info["pk"]))
-                    if releases:
-                        releases.sort(key=lambda x: x[0])
-                        latest_pk = releases[-1][1]
-                        data = {
-                            "download_url": f"/download-extension/{uuid}.shell-extension.zip?version_tag={latest_pk}"
-                        }
-                    else:
-                        print("No releases found in metadata version map.")
-            except Exception as e:
-                print(f"Failed to query fallback metadata: {e}")
-                
-        if data and "download_url" in data:
-            download_url = "https://extensions.gnome.org" + data["download_url"]
-            print(f"Downloading from {download_url}...")
-            
-            ext_dir = os.path.expanduser(f"~/.local/share/gnome-shell/extensions/{uuid}")
-            os.makedirs(ext_dir, exist_ok=True)
-            
-            dl_req = urllib.request.Request(download_url, headers={'User-Agent': 'Mozilla/5.0'})
-            zip_path = os.path.expanduser(f"~/temp_ext_{uuid}.zip")
-            try:
-                with urllib.request.urlopen(dl_req) as dl_resp, open(zip_path, 'wb') as out_file:
-                    out_file.write(dl_resp.read())
-                with zipfile.ZipFile(zip_path, "r") as zip_ref:
-                    zip_ref.extractall(ext_dir)
-                print(f"Extension {uuid} installed successfully.")
-            except Exception as e:
-                print(f"Failed to download or extract extension {uuid}: {e}")
-            finally:
-                if os.path.exists(zip_path):
-                    os.remove(zip_path)
-        else:
-            print(f"Skipping {uuid}: download URL could not be resolved.")
-except Exception as e:
-    print(f"General error in extension installation process: {e}")
-PY
-
-    echo "--> Enabling GNOME Shell Extensions..."
-    user_dbus_addr=""
-    user_pid=$(pgrep -u "$TARGET_USER" gnome-shell | head -n 1)
-    if [ -z "$user_pid" ]; then
-        user_pid=$(pgrep -u "$TARGET_USER" -f "session" | head -n 1)
-    fi
-    if [ -n "$user_pid" ]; then
-        user_dbus_addr=$(grep -z DBUS_SESSION_BUS_ADDRESS "/proc/$user_pid/environ" | cut -d= -f2- | tr -d '\0' || true)
-    fi
-
-    for ext in dash-to-dock@micxgx.gmail.com appindicatorsupport@rgcjonas.gmail.com bluetooth-quick-connect@bjarosze.github.io blur-my-shell@aunetx; do
-        if [ -n "$user_dbus_addr" ]; then
-            sudo -u "$TARGET_USER" DBUS_SESSION_BUS_ADDRESS="$user_dbus_addr" gnome-extensions enable "$ext" || \
-            sudo -u "$TARGET_USER" dbus-run-session gnome-extensions enable "$ext" || true
-        else
-            sudo -u "$TARGET_USER" dbus-run-session gnome-extensions enable "$ext" || true
-        fi
-    done
-
-    echo "--> Configuring GNOME preferences (Window button layout and Dark Mode)..."
-    if [ -n "$user_dbus_addr" ]; then
-        sudo -u "$TARGET_USER" DBUS_SESSION_BUS_ADDRESS="$user_dbus_addr" gsettings set org.gnome.desktop.wm.preferences button-layout "appmenu:minimize,maximize,close" || true
-        sudo -u "$TARGET_USER" DBUS_SESSION_BUS_ADDRESS="$user_dbus_addr" gsettings set org.gnome.desktop.interface color-scheme "prefer-dark" || true
+    echo "--> Installing GNOME Shell extensions (Blur my Shell & Bluetooth Quick Connect)..."
+    sudo -u "$TARGET_USER" pip install --user gnome-extensions-cli || true
+    GEXT_BIN="$TARGET_HOME/.local/bin/gext"
+    if [ -x "$GEXT_BIN" ]; then
+        for ext in bluetooth-quick-connect@bjarosze.gmail.com blur-my-shell@aunetx; do
+            sudo -u "$TARGET_USER" "$GEXT_BIN" install --backend file "$ext" || true
+        done
     else
-        sudo -u "$TARGET_USER" dbus-run-session gsettings set org.gnome.desktop.wm.preferences button-layout "appmenu:minimize,maximize,close" || true
-        sudo -u "$TARGET_USER" dbus-run-session gsettings set org.gnome.desktop.interface color-scheme "prefer-dark" || true
+        echo "Warning: gext not found, skipping non-packaged extension installs."
     fi
+
+    echo "--> Enabling GNOME Shell extensions & configuring preferences..."
+    sudo -u "$TARGET_USER" dbus-run-session dconf write /org/gnome/shell/enabled-extensions \
+        "['dash-to-dock@micxgx.gmail.com','appindicatorsupport@rgcjonas.gmail.com','bluetooth-quick-connect@bjarosze.gmail.com','blur-my-shell@aunetx']" || true
+    sudo -u "$TARGET_USER" dbus-run-session dconf write /org/gnome/desktop/wm/preferences/button-layout "'appmenu:minimize,maximize,close'" || true
+    sudo -u "$TARGET_USER" dbus-run-session dconf write /org/gnome/desktop/interface/color-scheme "'prefer-dark'" || true
 fi
 
 # ==============================================================================
@@ -364,23 +254,17 @@ flatpak install -y flathub com.github.tchx84.Flatseal || true
 # ==============================================================================
 echo "--> Setting up LibreOffice Microsoft Office compatibility defaults..."
 
-# 1. Global (system-wide) configuration:
-python3 - <<'PY'
-import os
-paths = [
-    '/usr/lib64/libreoffice/share/registry',
-    '/usr/share/libreoffice/share/registry',
-    '/usr/lib/libreoffice/share/registry'
-]
-registry_dir = None
-for p in paths:
-    if os.path.isdir(p):
-        registry_dir = p
+REGISTRY_DIR=""
+for dir in /usr/lib64/libreoffice/share/registry /usr/share/libreoffice/share/registry /usr/lib/libreoffice/share/registry; do
+    if [ -d "$dir" ]; then
+        REGISTRY_DIR="$dir"
         break
+    fi
+done
 
-if registry_dir:
-    xcd_path = os.path.join(registry_dir, 'microsoft-compatibility.xcd')
-    xcd_content = """<?xml version="1.0" encoding="UTF-8"?>
+if [ -n "$REGISTRY_DIR" ]; then
+    cat > "$REGISTRY_DIR/microsoft-compatibility.xcd" <<'XCD'
+<?xml version="1.0" encoding="UTF-8"?>
 <oor:data xmlns:oor="http://openoffice.org/2001/registry" xmlns:xs="http://www.w3.org/2001/XMLSchema">
   <dependency file="main"/>
   <oor:component-data oor:name="Setup" oor:package="org.openoffice">
@@ -405,68 +289,10 @@ if registry_dir:
     </node>
   </oor:component-data>
 </oor:data>
-"""
-    try:
-        with open(xcd_path, 'w', encoding='utf-8') as f:
-            f.write(xcd_content)
-        print(f"Created global LibreOffice compatibility overrides at: {xcd_path}")
-    except Exception as e:
-        print(f"Could not create global compatibility overrides: {e}")
-else:
-    print("Could not find LibreOffice share/registry directory for global settings.")
-PY
-
-# 2. User-specific configuration (so it works without restart/immediately for the target user):
-if [ "$TARGET_USER" != "root" ]; then
-    sudo -u "$TARGET_USER" python3 - <<'PY'
-import os
-import xml.etree.ElementTree as ET
-
-config_dir = os.path.expanduser('~/.config/libreoffice/4/user')
-os.makedirs(config_dir, exist_ok=True)
-xcu_path = os.path.join(config_dir, 'registrymodifications.xcu')
-
-ET.register_namespace('oor', 'http://openoffice.org/2001/registry')
-ET.register_namespace('xs', 'http://www.w3.org/2001/XMLSchema')
-
-if os.path.exists(xcu_path) and os.path.getsize(xcu_path) > 0:
-    try:
-        tree = ET.parse(xcu_path)
-        root = tree.getroot()
-    except Exception:
-        root = ET.Element('{http://openoffice.org/2001/registry}items')
-        tree = ET.ElementTree(root)
-else:
-    root = ET.Element('{http://openoffice.org/2001/registry}items')
-    tree = ET.ElementTree(root)
-
-targets = {
-    "/org.openoffice.Setup/Office/Factories/org.openoffice.Setup:Factory['com.sun.star.text.TextDocument']": "MS Word 2007 XML",
-    "/org.openoffice.Setup/Office/Factories/org.openoffice.Setup:Factory['com.sun.star.sheet.SpreadsheetDocument']": "MS Excel 2007 XML",
-    "/org.openoffice.Setup/Office/Factories/org.openoffice.Setup:Factory['com.sun.star.presentation.PresentationDocument']": "MS PowerPoint 2007 XML"
-}
-
-# Remove existing overrides to prevent duplicates
-for child in list(root):
-    path = child.attrib.get('{http://openoffice.org/2001/registry}path')
-    if path in targets:
-        root.remove(child)
-
-# Insert compatibility format overrides
-for path, filter_val in targets.items():
-    item = ET.SubElement(root, '{http://openoffice.org/2001/registry}item', {
-        '{http://openoffice.org/2001/registry}path': path
-    })
-    prop = ET.SubElement(item, 'prop', {
-        '{http://openoffice.org/2001/registry}name': 'ooSetupFactoryDefaultFilter',
-        '{http://openoffice.org/2001/registry}op': 'fuse'
-    })
-    val = ET.SubElement(prop, 'value')
-    val.text = filter_val
-
-tree.write(xcu_path, encoding='utf-8', xml_declaration=True)
-print("Updated user-specific LibreOffice registrymodifications.xcu for Microsoft format defaults.")
-PY
+XCD
+    echo "Created global LibreOffice compatibility overrides at: $REGISTRY_DIR/microsoft-compatibility.xcd"
+else
+    echo "Warning: Could not find LibreOffice share/registry directory."
 fi
 
 
@@ -697,51 +523,31 @@ if [ "$TARGET_USER" != "root" ]; then
     echo "--> Changing user shell to Zsh..."
     usermod -s /bin/zsh "$TARGET_USER"
 
-    echo "--> Configuring Starship prompt in .bashrc..."
-    if ! grep -q 'starship init bash' "$TARGET_HOME/.bashrc"; then
-        echo 'eval "$(starship init bash)"' >> "$TARGET_HOME/.bashrc"
-    fi
-
     echo "--> Configuring Zsh options and plugins in .zshrc..."
     ZSHRC_FILE="$TARGET_HOME/.zshrc"
-    if [ ! -f "$ZSHRC_FILE" ]; then
-        touch "$ZSHRC_FILE"
-    fi
+    if ! grep -q 'BEGIN SETUP BLOCKS' "$ZSHRC_FILE" 2>/dev/null; then
+        cat >> "$ZSHRC_FILE" <<'ZSHBLOCK'
 
-    # Append config block idempotently
-    python3 -c "
-import os, re
-path = '$ZSHRC_FILE'
-block = '''# BEGIN SETUP BLOCKS
+# BEGIN SETUP BLOCKS
 # Initialize Starship Prompt
-eval \"\$(starship init zsh)\"
+eval "$(starship init zsh)"
 
 # Enable syntax highlighting and autosuggestions from DNF packages
 source /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
 source /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh
 
 # Ensure local bin is in PATH (required for agy CLI)
-export PATH=\"\$HOME/.local/bin:\$PATH\"
+export PATH="$HOME/.local/bin:$PATH"
 
 # Sane Zsh options
 setopt HIST_IGNORE_DUPS
 setopt SHARE_HISTORY
 
 # Custom alias to easily reload zsh config
-alias reload=\"source ~/.zshrc\"
-# END SETUP BLOCKS'''
-
-content = ''
-if os.path.exists(path):
-    with open(path, 'r') as f:
-        content = f.read()
-
-content = re.sub(r'# BEGIN SETUP BLOCKS.*?# END SETUP BLOCKS', '', content, flags=re.DOTALL)
-content = content.rstrip('\n') + '\n\n' + block + '\n'
-
-with open(path, 'w') as f:
-    f.write(content)
-"
+alias reload="source ~/.zshrc"
+# END SETUP BLOCKS
+ZSHBLOCK
+    fi
     chown "$TARGET_USER":"$TARGET_GROUP" "$ZSHRC_FILE"
 fi
 
