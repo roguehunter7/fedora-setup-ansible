@@ -65,7 +65,7 @@ configure_dnf_speedups "/etc/dnf5/dnf.conf"
 # REMOVE UNWANTED DEFAULT APPLICATIONS
 # ==============================================================================
 echo "--> Uninstalling Firefox..."
-dnf remove -y 'firefox*'
+dnf remove -y 'firefox*' || true
 
 
 
@@ -119,8 +119,8 @@ fi
 # ==============================================================================
 FEDORA_VERSION=$(rpm -E %fedora)
 echo "--> Installing RPM Fusion Free and Nonfree repositories..."
-dnf install -y "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${FEDORA_VERSION}.noarch.rpm"
-dnf install -y "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_VERSION}.noarch.rpm"
+dnf install -y "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${FEDORA_VERSION}.noarch.rpm" || true
+dnf install -y "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_VERSION}.noarch.rpm" || true
 
 echo "--> Adding third-party repositories..."
 # Terra repository
@@ -191,10 +191,10 @@ fi
 # APPLICATIONS & MULTIMEDIA SWAP (MUST RUN INDEPENDENTLY FOR ALLOWERASING)
 # ==============================================================================
 echo "--> Swapping ffmpeg-free with full ffmpeg..."
-dnf install -y ffmpeg --allowerasing
+dnf install -y ffmpeg --allowerasing || true
 
 echo "--> Installing RPM Fusion multimedia group..."
-dnf group install -y "multimedia" --setopt=install_weak_deps=False --exclude=PackageKit-gstreamer-plugin
+dnf group install -y "multimedia" --setopt=install_weak_deps=False --exclude=PackageKit-gstreamer-plugin || true
 
 # ==============================================================================
 # CONSOLIDATED PACKAGE INSTALLATION (FASTER TRANSACTION RESOLUTION)
@@ -207,7 +207,7 @@ dnf install -y \
   golang nodejs python3 python3-pip python3-devel java-latest-openjdk distrobox zsh zsh-syntax-highlighting zsh-autosuggestions \
   gnome-tweaks gnome-extensions-app gnome-shell-extension-dash-to-dock gnome-shell-extension-appindicator \
   scx-scheds scx-tools flatpak cabextract mkfontscale fontconfig mesa-va-drivers-freeworld intel-media-driver hdparm \
-  libreoffice google-carlito-fonts google-crosextra-caladea-fonts
+  libreoffice google-carlito-fonts google-crosextra-caladea-fonts || true
 
 
 # ==============================================================================
