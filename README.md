@@ -21,7 +21,7 @@ This single command fetches the setup script directly and executes it with root 
 ## What this Script Does
 
 1. **DNF Speed Optimizations**: Configures `max_parallel_downloads=20`, `fastestmirror=True`, and `defaultyes=True` for both DNF and DNF5 to make package updates much faster.
-2. **App Cleanup (Removal)**: Uninstalls standard default applications: **Firefox** and **LibreOffice** mainly because i use brave and onlyoffice instead.
+2. **App Cleanup (Removal)**: Uninstalls standard default applications: **Firefox** mainly because i use brave instead.
 3. **System-wide Package Upgrade**: Upgrades all pre-installed system packages to their latest versions to ensure stability, safety, and resolve potential version conflicts.
 4. **Repository Configuration**:
    - Enables **RPM Fusion (Free & Non-Free)** repositories.
@@ -44,7 +44,7 @@ This single command fetches the setup script directly and executes it with root 
 7. **Multimedia Swap & Video Acceleration**:
    - Swaps out Fedora's restricted `ffmpeg-free` for full `ffmpeg` from RPM Fusion.
    - Installs the `@multimedia` package group (disabling weak dependencies and excluding PackageKit GStreamer plugins as recommended by RPM Fusion).
-   - Installs hardware-accelerated video decoding drivers (`mesa-va-drivers-freeworld`, `mesa-vdpau-drivers-freeworld`, and `intel-media-driver`) to offload video playback to the GPU, saving battery and CPU usage.
+   - Installs hardware-accelerated video decoding drivers (`mesa-va-drivers-freeworld` and `intel-media-driver`) to offload video playback to the GPU, saving battery and CPU usage.
 8. **Consolidated Package Installation**:
    - Downloads and installs all application and runtime packages in a **single DNF transaction** to maximize speed:
      - **Applications**: VLC, GNOME Boxes, Google Chrome, Brave Browser, Visual Studio Code.
@@ -56,10 +56,10 @@ This single command fetches the setup script directly and executes it with root 
    - Configures the system to use the kernel-level **`scx_rustland`** scheduler to guarantee maximum desktop responsiveness under heavy development/multitasking workloads.
 10. **Flatpak Integration**:
     - Ensures `flatpak` is installed, registers the **Flathub** remote repository, and removes the limited Fedora-centric Flatpak remote to ensure Flathub is your clean, exclusive source for Flatpaks.
-    - Installs **OnlyOffice Desktop Editors** and **Flatseal** (Flatpak permission manager) via Flatpak.
+    - Installs **Flatseal** (Flatpak permission manager) via Flatpak.
 11. **Font Polish (Nerd Fonts & Microsoft Fonts)**:
     - Automatically downloads and extracts the official **Fira Code Nerd Font** into the user's local fonts directory (`~/.local/share/fonts/`) for terminal prompt icon support.
-    - Downloads and installs the **Microsoft TrueType Core Fonts** (Arial, Times New Roman, Verdana, etc.) via the community installer.
+    - Downloads and installs the **Microsoft TrueType Core Fonts** (Arial, Times New Roman, Verdana, etc.) via the community installer, and metric-compatible fonts (**Carlito** and **Caladea**) for Microsoft Office formatting parity.
     - Automatically rebuilds the system font cache so all new fonts are immediately available.
 12. **Antigravity CLI**:
     - Downloads and installs the **Antigravity CLI (`agy`)** natively under the target user's directory (`~/.local/bin/agy`) using its official installer.
@@ -72,6 +72,8 @@ This single command fetches the setup script directly and executes it with root 
     - Sets your default system shell to **Zsh**.
     - Configures `~/.zshrc` to initialize the **Starship** shell prompt, expose the local binary path (`~/.local/bin`), and source the interactive shell plugins automatically.
     - Enables **Sudo Password Feedback** (shows asterisks `*` as you type passwords in the terminal).
+15. **LibreOffice Microsoft Compatibility**:
+    - Installs **LibreOffice** natively and configures both global and user-specific registry profiles to default to saving in Microsoft Office XML formats (DOCX, XLSX, PPTX).
 
 ---
 

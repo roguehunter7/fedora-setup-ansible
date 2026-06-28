@@ -60,8 +60,9 @@ configure_dnf_speedups "/etc/dnf5/dnf.conf"
 # ==============================================================================
 # REMOVE UNWANTED DEFAULT APPLICATIONS
 # ==============================================================================
-echo "--> Uninstalling Firefox and LibreOffice..."
-dnf remove -y 'firefox*' 'libreoffice*'
+echo "--> Uninstalling Firefox..."
+dnf remove -y 'firefox*'
+
 
 
 echo "--> Upgrading all system packages..."
@@ -223,7 +224,9 @@ dnf install -y \
   code brave-browser google-chrome-stable google-cloud-cli libxcrypt-compat \
   golang nodejs python3 python3-pip python3-devel java-latest-openjdk distrobox zsh zsh-syntax-highlighting zsh-autosuggestions \
   gnome-tweaks gnome-extensions-app gnome-shell-extension-dash-to-dock gnome-shell-extension-appindicator \
-  scx-scheds scx-tools flatpak cabextract mkfontscale fontconfig mesa-va-drivers-freeworld mesa-vdpau-drivers-freeworld intel-media-driver hdparm
+  scx-scheds scx-tools flatpak cabextract mkfontscale fontconfig mesa-va-drivers-freeworld intel-media-driver hdparm \
+  libreoffice google-carlito-fonts google-crosextra-caladea-fonts
+
 
 # ==============================================================================
 # GNOME CONFIGURATIONS
@@ -276,13 +279,123 @@ echo "SCX_SCHEDULER=scx_rustland" > /etc/default/scx
 echo "--> Enabling and starting sched-ext (SCX) service..."
 systemctl enable --now scx || systemctl enable --now scx.service
 
-echo "--> Setting up Flatpaks (OnlyOffice)..."
+echo "--> Setting up Flatpaks (Flatseal)..."
 flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || true
 if flatpak remote-list | grep -q '^fedora'; then
     flatpak remote-delete fedora || true
 fi
-flatpak install -y flathub org.onlyoffice.desktopeditors || true
 flatpak install -y flathub com.github.tchx84.Flatseal || true
+
+# ==============================================================================
+# LIBREOFFICE MICROSOFT COMPATIBILITY CONFIGURATION
+# ==============================================================================
+echo "--> Setting up LibreOffice Microsoft Office compatibility defaults..."
+
+# 1. Global (system-wide) configuration:
+python3 - <<'PY'
+import os
+paths = [
+    '/usr/lib64/libreoffice/share/registry',
+    '/usr/share/libreoffice/share/registry',
+    '/usr/lib/libreoffice/share/registry'
+]
+registry_dir = None
+for p in paths:
+    if os.path.isdir(p):
+        registry_dir = p
+        break
+
+if registry_dir:
+    xcd_path = os.path.join(registry_dir, 'microsoft-compatibility.xcd')
+    xcd_content = """<?xml version="1.0" encoding="UTF-8"?>
+<oor:data xmlns:oor="http://openoffice.org/2001/registry" xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <dependency file="main"/>
+  <oor:component-data oor:name="Setup" oor:package="org.openoffice">
+    <node oor:name="Office">
+      <node oor:name="Factories">
+        <node oor:name="org.openoffice.Setup:Factory['com.sun.star.text.TextDocument']">
+          <prop oor:name="ooSetupFactoryDefaultFilter" oor:op="fuse">
+            <value>MS Word 2007 XML</value>
+          </prop>
+        </node>
+        <node oor:name="org.openoffice.Setup:Factory['com.sun.star.sheet.SpreadsheetDocument']">
+          <prop oor:name="ooSetupFactoryDefaultFilter" oor:op="fuse">
+            <value>MS Excel 2007 XML</value>
+          </prop>
+        </node>
+        <node oor:name="org.openoffice.Setup:Factory['com.sun.star.presentation.PresentationDocument']">
+          <prop oor:name="ooSetupFactoryDefaultFilter" oor:op="fuse">
+            <value>MS PowerPoint 2007 XML</value>
+          </prop>
+        </node>
+      </node>
+    </node>
+  </oor:component-data>
+</oor:data>
+"""
+    try:
+        with open(xcd_path, 'w', encoding='utf-8') as f:
+            f.write(xcd_content)
+        print(f"Created global LibreOffice compatibility overrides at: {xcd_path}")
+    except Exception as e:
+        print(f"Could not create global compatibility overrides: {e}")
+else:
+    print("Could not find LibreOffice share/registry directory for global settings.")
+PY
+
+# 2. User-specific configuration (so it works without restart/immediately for the target user):
+if [ "$TARGET_USER" != "root" ]; then
+    sudo -u "$TARGET_USER" python3 - <<'PY'
+import os
+import xml.etree.ElementTree as ET
+
+config_dir = os.path.expanduser('~/.config/libreoffice/4/user')
+os.makedirs(config_dir, exist_ok=True)
+xcu_path = os.path.join(config_dir, 'registrymodifications.xcu')
+
+ET.register_namespace('oor', 'http://openoffice.org/2001/registry')
+ET.register_namespace('xs', 'http://www.w3.org/2001/XMLSchema')
+
+if os.path.exists(xcu_path) and os.path.getsize(xcu_path) > 0:
+    try:
+        tree = ET.parse(xcu_path)
+        root = tree.getroot()
+    except Exception:
+        root = ET.Element('{http://openoffice.org/2001/registry}items')
+        tree = ET.ElementTree(root)
+else:
+    root = ET.Element('{http://openoffice.org/2001/registry}items')
+    tree = ET.ElementTree(root)
+
+targets = {
+    "/org.openoffice.Setup/Office/Factories/org.openoffice.Setup:Factory['com.sun.star.text.TextDocument']": "MS Word 2007 XML",
+    "/org.openoffice.Setup/Office/Factories/org.openoffice.Setup:Factory['com.sun.star.sheet.SpreadsheetDocument']": "MS Excel 2007 XML",
+    "/org.openoffice.Setup/Office/Factories/org.openoffice.Setup:Factory['com.sun.star.presentation.PresentationDocument']": "MS PowerPoint 2007 XML"
+}
+
+# Remove existing overrides to prevent duplicates
+for child in list(root):
+    path = child.attrib.get('{http://openoffice.org/2001/registry}path')
+    if path in targets:
+        root.remove(child)
+
+# Insert compatibility format overrides
+for path, filter_val in targets.items():
+    item = ET.SubElement(root, '{http://openoffice.org/2001/registry}item', {
+        '{http://openoffice.org/2001/registry}path': path
+    })
+    prop = ET.SubElement(item, 'prop', {
+        '{http://openoffice.org/2001/registry}name': 'ooSetupFactoryDefaultFilter',
+        '{http://openoffice.org/2001/registry}op': 'fuse'
+    })
+    val = ET.SubElement(prop, 'value')
+    val.text = filter_val
+
+tree.write(xcu_path, encoding='utf-8', xml_declaration=True)
+print("Updated user-specific LibreOffice registrymodifications.xcu for Microsoft format defaults.")
+PY
+fi
+
 
 # ==============================================================================
 # FONTS (NERD FONTS & MICROSOFT CORE FONTS)
