@@ -212,28 +212,23 @@ dnf install -y \
 
 
 # ==============================================================================
-# GNOME CONFIGURATIONS
+# GNOME CONFIGURATIONS (SYSTEM-WIDE DEFAULTS)
 # ==============================================================================
-if [ "$TARGET_USER" != "root" ]; then
-    echo "--> Installing GNOME Shell extensions (Blur my Shell & Bluetooth Quick Connect)..."
-    sudo -u "$TARGET_USER" pip install --user gnome-extensions-cli || true
-    GEXT_BIN="$TARGET_HOME/.local/bin/gext"
-    if [ -x "$GEXT_BIN" ]; then
-        for ext in bluetooth-quick-connect@bjarosze.gmail.com blur-my-shell@aunetx; do
-            sudo -u "$TARGET_USER" "$GEXT_BIN" install --backend file "$ext" || true
-        done
-    else
-        echo "Warning: gext not found, skipping non-packaged extension installs."
-    fi
+echo "--> Configuring GNOME system-wide defaults (Dark Mode, Window Buttons, Extensions)..."
 
-    echo "--> Enabling GNOME Shell extensions & configuring preferences..."
-    sudo -u "$TARGET_USER" dbus-run-session bash -c "
-        dconf write /org/gnome/shell/enabled-extensions \"['dash-to-dock@micxgx.gmail.com','appindicatorsupport@rgcjonas.gmail.com','bluetooth-quick-connect@bjarosze.gmail.com','blur-my-shell@aunetx']\"
-        dconf write /org/gnome/desktop/wm/preferences/button-layout \"'appmenu:minimize,maximize,close'\"
-        dconf write /org/gnome/desktop/interface/color-scheme \"'prefer-dark'\"
-        sleep 1
-    " || true
-fi
+cat > /usr/share/glib-2.0/schemas/99-fedora-setup.gschema.override <<'EOF'
+[org.gnome.desktop.interface]
+color-scheme='prefer-dark'
+
+[org.gnome.desktop.wm.preferences]
+button-layout='appmenu:minimize,maximize,close'
+
+[org.gnome.shell]
+enabled-extensions=['dash-to-dock@micxgx.gmail.com', 'appindicatorsupport@rgcjonas.gmail.com']
+EOF
+
+echo "--> Compiling GLib schemas..."
+glib-compile-schemas /usr/share/glib-2.0/schemas/
 
 # ==============================================================================
 # PERFORMANCE SCHEDULER & FLATPAK
