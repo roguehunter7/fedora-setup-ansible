@@ -6,6 +6,7 @@
 # management, GNOME customizations, and development tool installs on Fedora.
 # ==============================================================================
 
+{
 set -euo pipefail
 
 # Ensure script is run as root
@@ -558,3 +559,4 @@ chmod 0440 /etc/sudoers.d/pwfeedback
 echo "=============================================================================="
 echo "Setup complete! Please restart your system or log out and back in to apply all updates."
 echo "=============================================================================="
+}
