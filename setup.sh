@@ -205,7 +205,7 @@ dnf install -y \
   @development-tools \
   vlc gnome-boxes gstreamer1-plugins-ugly gstreamer1-plugins-bad-freeworld gstreamer1-libav lame-libs \
   code brave-browser google-chrome-stable google-cloud-cli libxcrypt-compat \
-  golang nodejs python3 python3-pip python3-devel java-latest-openjdk distrobox zsh zsh-syntax-highlighting zsh-autosuggestions \
+  golang nodejs python3 python3-pip python3-devel java-latest-openjdk distrobox zsh zsh-syntax-highlighting zsh-autosuggestions starship \
   gnome-tweaks gnome-extensions-app gnome-shell-extension-dash-to-dock gnome-shell-extension-appindicator \
   scx-scheds scx-tools flatpak cabextract mkfontscale fontconfig mesa-va-drivers-freeworld intel-media-driver hdparm \
   libreoffice google-carlito-fonts google-crosextra-caladea-fonts || true
@@ -227,10 +227,12 @@ if [ "$TARGET_USER" != "root" ]; then
     fi
 
     echo "--> Enabling GNOME Shell extensions & configuring preferences..."
-    sudo -u "$TARGET_USER" dbus-run-session dconf write /org/gnome/shell/enabled-extensions \
-        "['dash-to-dock@micxgx.gmail.com','appindicatorsupport@rgcjonas.gmail.com','bluetooth-quick-connect@bjarosze.gmail.com','blur-my-shell@aunetx']" || true
-    sudo -u "$TARGET_USER" dbus-run-session dconf write /org/gnome/desktop/wm/preferences/button-layout "'appmenu:minimize,maximize,close'" || true
-    sudo -u "$TARGET_USER" dbus-run-session dconf write /org/gnome/desktop/interface/color-scheme "'prefer-dark'" || true
+    sudo -u "$TARGET_USER" dbus-run-session bash -c "
+        dconf write /org/gnome/shell/enabled-extensions \"['dash-to-dock@micxgx.gmail.com','appindicatorsupport@rgcjonas.gmail.com','bluetooth-quick-connect@bjarosze.gmail.com','blur-my-shell@aunetx']\"
+        dconf write /org/gnome/desktop/wm/preferences/button-layout \"'appmenu:minimize,maximize,close'\"
+        dconf write /org/gnome/desktop/interface/color-scheme \"'prefer-dark'\"
+        sleep 1
+    " || true
 fi
 
 # ==============================================================================
